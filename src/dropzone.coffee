@@ -488,6 +488,7 @@ class Dropzone extends Em
         @hiddenFileInput = document.createElement "input"
         @hiddenFileInput.setAttribute "type", "file"
         @hiddenFileInput.setAttribute "multiple", "multiple" if !@options.maxFiles? || @options.maxFiles > 1
+        @hiddenFileInput.className = "dz-hidden-input"
 
         @hiddenFileInput.setAttribute "accept", @options.acceptedFiles if @options.acceptedFiles?
 
@@ -1086,7 +1087,7 @@ class Dropzone extends Em
 
 
 
-Dropzone.version = "3.8.4"
+Dropzone.version = "3.8.5"
 
 
 # This is a map of options for your different dropzones. Add configurations
@@ -1187,7 +1188,7 @@ Dropzone.isBrowserSupported = ->
 without = (list, rejectedItem) -> item for item in list when item isnt rejectedItem
 
 # abc-def_ghi -> abcDefGhi
-camelize = (str) -> str.replace /[\-_](\w)/g, (match) -> match[1].toUpperCase()
+camelize = (str) -> str.replace /[\-_](\w)/g, (match) -> match.charAt(1).toUpperCase()
 
 # Creates an element from string
 Dropzone.createElement = (string) ->
