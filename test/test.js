@@ -5,6 +5,8 @@
     var getMockFile, xhr;
     getMockFile = function() {
       return {
+        status: Dropzone.ADDED,
+        accepted: true,
         name: "test file name",
         size: 123456,
         type: "text/html"
@@ -645,7 +647,9 @@
         beforeEach(function() {
           file = {
             name: "test name",
-            size: 2 * 1024 * 1024
+            size: 2 * 1024 * 1024,
+            width: 200,
+            height: 100
           };
           return dropzone.options.addedfile.call(dropzone, file);
         });
@@ -678,7 +682,7 @@
             return thumbnail.alt.should.eql("test name");
           });
         });
-        return describe(".uploadprogress()", function() {
+        describe(".uploadprogress()", function() {
           return it("should properly set the width", function() {
             dropzone.options.uploadprogress.call(dropzone, file, 0);
             file.previewElement.querySelector("[data-dz-uploadprogress]").style.width.should.eql("0%");
@@ -688,6 +692,44 @@
             file.previewElement.querySelector("[data-dz-uploadprogress]").style.width.should.eql("90%");
             dropzone.options.uploadprogress.call(dropzone, file, 100);
             return file.previewElement.querySelector("[data-dz-uploadprogress]").style.width.should.eql("100%");
+          });
+        });
+        return describe(".resize()", function() {
+          describe("with default thumbnail settings", function() {
+            return it("should properly return target dimensions", function() {
+              var info;
+              info = dropzone.options.resize.call(dropzone, file);
+              info.optWidth.should.eql(100);
+              return info.optHeight.should.eql(100);
+            });
+          });
+          return describe("with null thumbnail settings", function() {
+            return it("should properly return target dimensions", function() {
+              var i, info, setting, testSettings, _i, _len, _results;
+              testSettings = [[null, null], [null, 150], [150, null]];
+              _results = [];
+              for (i = _i = 0, _len = testSettings.length; _i < _len; i = ++_i) {
+                setting = testSettings[i];
+                dropzone.options.thumbnailWidth = setting[0];
+                dropzone.options.thumbnailHeight = setting[1];
+                info = dropzone.options.resize.call(dropzone, file);
+                if (i === 0) {
+                  info.optWidth.should.eql(200);
+                  info.optHeight.should.eql(100);
+                }
+                if (i === 1) {
+                  info.optWidth.should.eql(300);
+                  info.optHeight.should.eql(150);
+                }
+                if (i === 2) {
+                  info.optWidth.should.eql(150);
+                  _results.push(info.optHeight.should.eql(75));
+                } else {
+                  _results.push(void 0);
+                }
+              }
+              return _results;
+            });
           });
         });
       });
@@ -1036,6 +1078,7 @@
               {
                 size: 1990,
                 accepted: true,
+                status: Dropzone.UPLOADING,
                 upload: {
                   progress: 20,
                   total: 2000,
@@ -1044,6 +1087,7 @@
               }, {
                 size: 1990,
                 accepted: true,
+                status: Dropzone.UPLOADING,
                 upload: {
                   progress: 10,
                   total: 2000,
@@ -1067,7 +1111,9 @@
             totalProgressExpectation = 100;
             dropzone.files[0].upload.bytesSent = 2000;
             dropzone.files[1].upload.bytesSent = 2000;
-            return dropzone.emit("uploadprogress", {});
+            dropzone.emit("uploadprogress", {});
+            dropzone.files[0].status = Dropzone.CANCELED;
+            return dropzone.files[1].status = Dropzone.CANCELED;
           });
         });
       });
@@ -1105,7 +1151,7 @@
         });
       });
       describe("getFallbackForm()", function() {
-        it("should use the paramName without [] if uploadMultiple is false", function() {
+        it("should use the paramName without [0] if uploadMultiple is false", function() {
           var fallback, fileInput;
           dropzone.options.uploadMultiple = false;
           dropzone.options.paramName = "myFile";
@@ -1113,13 +1159,13 @@
           fileInput = fallback.querySelector("input[type=file]");
           return fileInput.name.should.equal("myFile");
         });
-        return it("should properly add [] to the file name if uploadMultiple is true", function() {
+        return it("should properly add [0] to the file name if uploadMultiple is true", function() {
           var fallback, fileInput;
           dropzone.options.uploadMultiple = true;
           dropzone.options.paramName = "myFile";
           fallback = dropzone.getFallbackForm();
           fileInput = fallback.querySelector("input[type=file]");
-          return fileInput.name.should.equal("myFile[]");
+          return fileInput.name.should.equal("myFile[0]");
         });
       });
       describe("getAcceptedFiles() / getRejectedFiles()", function() {
@@ -1173,7 +1219,7 @@
           return mock4.status.should.equal(Dropzone.ADDED);
         });
       });
-      return describe("getUploadingFiles()", function() {
+      describe("getUploadingFiles()", function() {
         return it("should return all files with the status Dropzone.UPLOADING", function(done) {
           var mock1, mock2, mock3, mock4;
           mock1 = getMockFile();
@@ -1199,6 +1245,60 @@
             mock4.status.should.equal(Dropzone.ADDED);
             return done();
           }), 10);
+        });
+      });
+      describe("getActiveFiles()", function() {
+        return it("should return all files with the status Dropzone.UPLOADING or Dropzone.QUEUED", function(done) {
+          var mock1, mock2, mock3, mock4;
+          mock1 = getMockFile();
+          mock2 = getMockFile();
+          mock3 = getMockFile();
+          mock4 = getMockFile();
+          dropzone.options.accept = function(file, _done) {
+            return file.done = _done;
+          };
+          dropzone.uploadFile = function() {};
+          dropzone.options.parallelUploads = 2;
+          dropzone.addFile(mock1);
+          dropzone.addFile(mock2);
+          dropzone.addFile(mock3);
+          dropzone.addFile(mock4);
+          dropzone.getActiveFiles().should.eql([]);
+          mock1.done();
+          mock3.done();
+          mock4.done();
+          return setTimeout((function() {
+            dropzone.getActiveFiles().should.eql([mock1, mock3, mock4]);
+            mock1.status.should.equal(Dropzone.UPLOADING);
+            mock3.status.should.equal(Dropzone.UPLOADING);
+            mock2.status.should.equal(Dropzone.ADDED);
+            mock4.status.should.equal(Dropzone.QUEUED);
+            return done();
+          }), 10);
+        });
+      });
+      return describe("getFilesWithStatus()", function() {
+        return it("should return all files with provided status", function() {
+          var mock1, mock2, mock3, mock4;
+          mock1 = getMockFile();
+          mock2 = getMockFile();
+          mock3 = getMockFile();
+          mock4 = getMockFile();
+          dropzone.options.accept = function(file, _done) {
+            return file.done = _done;
+          };
+          dropzone.uploadFile = function() {};
+          dropzone.addFile(mock1);
+          dropzone.addFile(mock2);
+          dropzone.addFile(mock3);
+          dropzone.addFile(mock4);
+          dropzone.getFilesWithStatus(Dropzone.ADDED).should.eql([mock1, mock2, mock3, mock4]);
+          mock1.status = Dropzone.UPLOADING;
+          mock3.status = Dropzone.QUEUED;
+          mock4.status = Dropzone.QUEUED;
+          dropzone.getFilesWithStatus(Dropzone.ADDED).should.eql([mock2]);
+          dropzone.getFilesWithStatus(Dropzone.UPLOADING).should.eql([mock1]);
+          return dropzone.getFilesWithStatus(Dropzone.QUEUED).should.eql([mock3, mock4]);
         });
       });
     });
@@ -1255,6 +1355,20 @@
             dropzone.processQueue.callCount.should.equal(0);
             return done();
           }), 10);
+        });
+        it("should not add the file to the queue if autoQueue is false", function() {
+          var doneFunction;
+          doneFunction = null;
+          dropzone.options.autoQueue = false;
+          dropzone.accept = function(file, done) {
+            return doneFunction = done;
+          };
+          dropzone.processFile = function() {};
+          dropzone.uploadFile = function() {};
+          dropzone.addFile(mockFile);
+          mockFile.status.should.eql(Dropzone.ADDED);
+          doneFunction();
+          return mockFile.status.should.eql(Dropzone.ADDED);
         });
         it("should create a remove link if configured to do so", function() {
           dropzone.options.addRemoveLinks = true;
@@ -1494,7 +1608,7 @@
             dropzone.uploadFile(mockFile);
             return requests[0].requestHeaders["Foo-Header"].should.eql('foobar');
           });
-          it("should properly use the paramName without [] as file upload if uploadMultiple is false", function(done) {
+          it("should properly use the paramName without [n] as file upload if uploadMultiple is false", function(done) {
             var formData, mock1, mock2, sendingCount;
             dropzone.options.uploadMultiple = false;
             dropzone.options.paramName = "myName";
@@ -1519,7 +1633,7 @@
               return done();
             }, 10);
           });
-          return it("should properly use the paramName with [] as file upload if uploadMultiple is true", function(done) {
+          return it("should properly use the paramName with [n] as file upload if uploadMultiple is true", function(done) {
             var formData, mock1, mock2, sendingCount, sendingMultipleCount;
             dropzone.options.uploadMultiple = true;
             dropzone.options.paramName = "myName";
@@ -1543,8 +1657,8 @@
               sendingMultipleCount.should.equal(1);
               dropzone.uploadFiles([mock1, mock2]);
               formData.append.callCount.should.equal(2);
-              formData.append.args[0][0].should.eql("myName[]");
-              formData.append.args[1][0].should.eql("myName[]");
+              formData.append.args[0][0].should.eql("myName[0]");
+              formData.append.args[1][0].should.eql("myName[1]");
               return done();
             }, 10);
           });
@@ -1587,11 +1701,10 @@
           mock2.name = "mock2";
           mock3.name = "mock3";
           dropzone.uploadFiles = function(files) {
-            return setTimeout(((function(_this) {
-              return function() {
-                return _this._finished(files, null, null);
-              };
-            })(this)), 1);
+            var _this = this;
+            return setTimeout((function() {
+              return _this._finished(files, null, null);
+            }), 1);
           };
           completedFiles = 0;
           dropzone.on("complete", function(file) {

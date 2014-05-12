@@ -4,6 +4,8 @@ describe "Dropzone", ->
 
 
   getMockFile = ->
+    status: Dropzone.ADDED
+    accepted: true
     name: "test file name"
     size: 123456
     type: "text/html"
@@ -426,6 +428,8 @@ describe "Dropzone", ->
         file =
           name: "test name"
           size: 2 * 1024 * 1024
+          width: 200
+          height: 100
         dropzone.options.addedfile.call dropzone, file
 
       describe ".addedFile()", ->
@@ -465,6 +469,41 @@ describe "Dropzone", ->
           dropzone.options.uploadprogress.call dropzone, file, 100
           file.previewElement.querySelector("[data-dz-uploadprogress]").style.width.should.eql "100%"
 
+      describe ".resize()", ->
+
+        describe "with default thumbnail settings", ->
+          it "should properly return target dimensions", ->
+
+            info = dropzone.options.resize.call dropzone, file
+
+            info.optWidth.should.eql 100
+            info.optHeight.should.eql 100
+
+        describe "with null thumbnail settings", ->
+          it "should properly return target dimensions", ->
+            testSettings = [
+              [null, null],
+              [null, 150],
+              [150, null]
+            ]
+
+            for setting, i in testSettings
+              dropzone.options.thumbnailWidth = setting[0]
+              dropzone.options.thumbnailHeight = setting[1]
+
+              info = dropzone.options.resize.call dropzone, file
+
+              if i is 0
+                info.optWidth.should.eql 200
+                info.optHeight.should.eql 100
+
+              if i is 1
+                info.optWidth.should.eql 300
+                info.optHeight.should.eql 150
+
+              if i is 2
+                info.optWidth.should.eql 150
+                info.optHeight.should.eql 75
 
   describe "instance", ->
 
@@ -765,6 +804,7 @@ describe "Dropzone", ->
             {
               size: 1990
               accepted: true
+              status: Dropzone.UPLOADING
               upload:
                 progress: 20
                 total: 2000 # The bytes to upload are higher than the file size
@@ -773,6 +813,7 @@ describe "Dropzone", ->
             {
               size: 1990
               accepted: true
+              status: Dropzone.UPLOADING
               upload:
                 progress: 10
                 total: 2000 # The bytes to upload are higher than the file size
@@ -803,6 +844,10 @@ describe "Dropzone", ->
           # should be calculated from the bytes
           dropzone.emit "uploadprogress", { }
 
+          # Just so the afterEach hook doesn't try to cancel them.
+          dropzone.files[0].status = Dropzone.CANCELED
+          dropzone.files[1].status = Dropzone.CANCELED
+
 
   describe "helper function", ->
     element = null
@@ -830,18 +875,18 @@ describe "Dropzone", ->
         fallback.should.equal dropzone.getExistingFallback()
 
     describe "getFallbackForm()", ->
-      it "should use the paramName without [] if uploadMultiple is false", ->
+      it "should use the paramName without [0] if uploadMultiple is false", ->
         dropzone.options.uploadMultiple = false
         dropzone.options.paramName = "myFile"
         fallback = dropzone.getFallbackForm()
         fileInput = fallback.querySelector "input[type=file]"
         fileInput.name.should.equal "myFile"
-      it "should properly add [] to the file name if uploadMultiple is true", ->
+      it "should properly add [0] to the file name if uploadMultiple is true", ->
         dropzone.options.uploadMultiple = yes
         dropzone.options.paramName = "myFile"
         fallback = dropzone.getFallbackForm()
         fileInput = fallback.querySelector "input[type=file]"
-        fileInput.name.should.equal "myFile[]"
+        fileInput.name.should.equal "myFile[0]"
 
 
     describe "getAcceptedFiles() / getRejectedFiles()", ->
@@ -922,6 +967,65 @@ describe "Dropzone", ->
         ), 10
 
 
+    describe "getActiveFiles()", ->
+      it "should return all files with the status Dropzone.UPLOADING or Dropzone.QUEUED", (done) ->
+        mock1 = getMockFile()
+        mock2 = getMockFile()
+        mock3 = getMockFile()
+        mock4 = getMockFile()
+
+        dropzone.options.accept = (file, _done) -> file.done = _done
+        dropzone.uploadFile = ->
+        dropzone.options.parallelUploads = 2
+
+        dropzone.addFile mock1
+        dropzone.addFile mock2
+        dropzone.addFile mock3
+        dropzone.addFile mock4
+
+        dropzone.getActiveFiles().should.eql [ ]
+
+        mock1.done()
+        mock3.done()
+        mock4.done()
+
+        setTimeout (->
+          dropzone.getActiveFiles().should.eql [ mock1, mock3, mock4 ]
+          mock1.status.should.equal Dropzone.UPLOADING
+          mock3.status.should.equal Dropzone.UPLOADING
+          mock2.status.should.equal Dropzone.ADDED
+          mock4.status.should.equal Dropzone.QUEUED
+          done()
+        ), 10
+
+
+    describe "getFilesWithStatus()", ->
+      it "should return all files with provided status", ->
+        mock1 = getMockFile()
+        mock2 = getMockFile()
+        mock3 = getMockFile()
+        mock4 = getMockFile()
+
+        dropzone.options.accept = (file, _done) -> file.done = _done
+        dropzone.uploadFile = ->
+
+        dropzone.addFile mock1
+        dropzone.addFile mock2
+        dropzone.addFile mock3
+        dropzone.addFile mock4
+
+        dropzone.getFilesWithStatus(Dropzone.ADDED).should.eql [ mock1, mock2, mock3, mock4 ]
+
+        mock1.status = Dropzone.UPLOADING
+        mock3.status = Dropzone.QUEUED
+        mock4.status = Dropzone.QUEUED
+
+        dropzone.getFilesWithStatus(Dropzone.ADDED).should.eql [ mock2 ]
+        dropzone.getFilesWithStatus(Dropzone.UPLOADING).should.eql [ mock1 ]
+        dropzone.getFilesWithStatus(Dropzone.QUEUED).should.eql [ mock3, mock4 ]
+        
+
+
 
   describe "file handling", ->
     mockFile = null
@@ -977,6 +1081,19 @@ describe "Dropzone", ->
           dropzone.processQueue.callCount.should.equal 0
           done()
         ), 10
+
+      it "should not add the file to the queue if autoQueue is false", ->
+        doneFunction = null
+        dropzone.options.autoQueue = false
+        dropzone.accept = (file, done) -> doneFunction = done
+        dropzone.processFile = ->
+        dropzone.uploadFile = ->
+
+        dropzone.addFile mockFile
+
+        mockFile.status.should.eql Dropzone.ADDED
+        doneFunction()
+        mockFile.status.should.eql Dropzone.ADDED
 
       it "should create a remove link if configured to do so", ->
         dropzone.options.addRemoveLinks = true
@@ -1075,9 +1192,6 @@ describe "Dropzone", ->
           
 
           # dropzone.addFile mock1
-
-
-
 
     describe "enqueueFile()", ->
       it "should be wrapped by enqueueFiles()", ->
@@ -1284,7 +1398,7 @@ describe "Dropzone", ->
           dropzone.uploadFile mockFile
           requests[0].requestHeaders["Foo-Header"].should.eql 'foobar'
 
-        it "should properly use the paramName without [] as file upload if uploadMultiple is false", (done) ->
+        it "should properly use the paramName without [n] as file upload if uploadMultiple is false", (done) ->
           dropzone.options.uploadMultiple = false
           dropzone.options.paramName = "myName"
 
@@ -1316,7 +1430,7 @@ describe "Dropzone", ->
           , 10
 
 
-        it "should properly use the paramName with [] as file upload if uploadMultiple is true", (done) ->
+        it "should properly use the paramName with [n] as file upload if uploadMultiple is true", (done) ->
           dropzone.options.uploadMultiple = yes
           dropzone.options.paramName = "myName"
 
@@ -1340,8 +1454,8 @@ describe "Dropzone", ->
             sendingMultipleCount.should.equal 1
             dropzone.uploadFiles [ mock1, mock2 ]
             formData.append.callCount.should.equal 2
-            formData.append.args[0][0].should.eql "myName[]"
-            formData.append.args[1][0].should.eql "myName[]"
+            formData.append.args[0][0].should.eql "myName[0]"
+            formData.append.args[1][0].should.eql "myName[1]"
             done()
           , 10
 
@@ -1378,7 +1492,6 @@ describe "Dropzone", ->
               done()
             , 10
           , 10
-
 
     describe "complete file", ->
       it "should properly emit the queuecomplete event when the complete queue is finished", (done) ->

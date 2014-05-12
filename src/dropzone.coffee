@@ -116,12 +116,16 @@ class Dropzone extends Em
     # Use acceptedFiles instead.
     acceptedMimeTypes: null
 
-    # If false, files will be added to the queue but the queu will not be
+    # If false, files will be added to the queue but the queue will not be
     # processed automatically.
     # This can be useful if you need some additional user input before sending
     # files (or if you want want all files sent at once).
     # If you're ready to send the file simply call myDropzone.processQueue()
     autoProcessQueue: on
+
+    # If false, files added to the dropzone will not be queued by default.
+    # You'll have to call `enqueueFile(file)` manually.
+    autoQueue: on
 
     # If true, Dropzone will add a link to each file preview to cancel/remove
     # the upload.
@@ -129,7 +133,8 @@ class Dropzone extends Em
     addRemoveLinks: no
 
     # A CSS selector or HTML element for the file previews container.
-    # If null, the dropzone element itself will be used
+    # If null, the dropzone element itself will be used.
+    # If false, previews won't be rendered.
     previewsContainer: null
     
 
@@ -225,12 +230,27 @@ class Dropzone extends Em
         srcHeight: file.height
 
       srcRatio = file.width / file.height
-      trgRatio = @options.thumbnailWidth / @options.thumbnailHeight
+
+      info.optWidth = @options.thumbnailWidth
+      info.optHeight = @options.thumbnailHeight
+
+      if not (info.optWidth? and info.optHeigh?)
+        # automatically calculate dimensions if not specified
+        if not info.optWidth? and not info.optHeight?
+          info.optWidth = info.srcWidth
+          info.optHeight = info.srcHeight
+        else if not info.optWidth?
+          info.optWidth = srcRatio * info.optHeight
+        else if not info.optHeight?
+          info.optHeight = (1/srcRatio) * info.optWidth
+
+      trgRatio = info.optWidth / info.optHeight
       
-      if file.height < @options.thumbnailHeight or file.width < @options.thumbnailWidth
+      if file.height < info.optHeight or file.width < info.optWidth
         # This image is smaller than the canvas
         info.trgHeight = info.srcHeight
         info.trgWidth = info.srcWidth
+
       else
         # Image is bigger and needs rescaling
         if srcRatio > trgRatio
@@ -278,52 +298,55 @@ class Dropzone extends Em
     addedfile: (file) ->
       @element.classList.add "dz-started" if @element == @previewsContainer
 
-      file.previewElement = Dropzone.createElement @options.previewTemplate.trim()
-      file.previewTemplate = file.previewElement # Backwards compatibility
+      if @previewsContainer
+        file.previewElement = Dropzone.createElement @options.previewTemplate.trim()
+        file.previewTemplate = file.previewElement # Backwards compatibility
 
-      @previewsContainer.appendChild file.previewElement
-      node.textContent = file.name for node in file.previewElement.querySelectorAll("[data-dz-name]")
-      node.innerHTML = @filesize file.size for node in file.previewElement.querySelectorAll("[data-dz-size]")
+        @previewsContainer.appendChild file.previewElement
+        node.textContent = file.name for node in file.previewElement.querySelectorAll("[data-dz-name]")
+        node.innerHTML = @filesize file.size for node in file.previewElement.querySelectorAll("[data-dz-size]")
 
-      if @options.addRemoveLinks
-        file._removeLink = Dropzone.createElement """<a class="dz-remove" href="javascript:undefined;" data-dz-remove>#{@options.dictRemoveFile}</a>"""
-        file.previewElement.appendChild file._removeLink
+        if @options.addRemoveLinks
+          file._removeLink = Dropzone.createElement """<a class="dz-remove" href="javascript:undefined;" data-dz-remove>#{@options.dictRemoveFile}</a>"""
+          file.previewElement.appendChild file._removeLink
 
-      removeFileEvent = (e) =>
-        e.preventDefault()
-        e.stopPropagation()
-        if file.status == Dropzone.UPLOADING
-          Dropzone.confirm @options.dictCancelUploadConfirmation, => @removeFile file
-        else
-          if @options.dictRemoveFileConfirmation
-            Dropzone.confirm @options.dictRemoveFileConfirmation, => @removeFile file
+        removeFileEvent = (e) =>
+          e.preventDefault()
+          e.stopPropagation()
+          if file.status == Dropzone.UPLOADING
+            Dropzone.confirm @options.dictCancelUploadConfirmation, => @removeFile file
           else
-            @removeFile file
+            if @options.dictRemoveFileConfirmation
+              Dropzone.confirm @options.dictRemoveFileConfirmation, => @removeFile file
+            else
+              @removeFile file
 
-      removeLink.addEventListener "click", removeFileEvent for removeLink in file.previewElement.querySelectorAll("[data-dz-remove]")
+        removeLink.addEventListener "click", removeFileEvent for removeLink in file.previewElement.querySelectorAll("[data-dz-remove]")
         
 
     # Called whenever a file is removed.
     removedfile: (file) ->
-      file.previewElement?.parentNode.removeChild file.previewElement
+      file.previewElement?.parentNode.removeChild file.previewElement if file.previewElement
       @_updateMaxFilesReachedClass()
 
     # Called when a thumbnail has been generated
     # Receives `file` and `dataUrl`
     thumbnail: (file, dataUrl) ->
-      file.previewElement.classList.remove "dz-file-preview"
-      file.previewElement.classList.add "dz-image-preview"
-      for thumbnailElement in file.previewElement.querySelectorAll("[data-dz-thumbnail]")
-        thumbnailElement.alt = file.name
-        thumbnailElement.src = dataUrl
+      if file.previewElement
+        file.previewElement.classList.remove "dz-file-preview"
+        file.previewElement.classList.add "dz-image-preview"
+        for thumbnailElement in file.previewElement.querySelectorAll("[data-dz-thumbnail]")
+          thumbnailElement.alt = file.name
+          thumbnailElement.src = dataUrl
 
     
     # Called whenever an error occurs
     # Receives `file` and `message`
     error: (file, message) ->
-      file.previewElement.classList.add "dz-error"
-      message = message.error if typeof message != "String" and message.error
-      node.textContent = message for node in file.previewElement.querySelectorAll("[data-dz-errormessage]")
+      if file.previewElement
+        file.previewElement.classList.add "dz-error"
+        message = message.error if typeof message != "String" and message.error
+        node.textContent = message for node in file.previewElement.querySelectorAll("[data-dz-errormessage]")
     
     errormultiple: noop
     
@@ -331,8 +354,9 @@ class Dropzone extends Em
     # files are processed immediately.
     # Receives `file`
     processing: (file) ->
-      file.previewElement.classList.add "dz-processing"
-      file._removeLink.textContent = @options.dictCancelUpload if file._removeLink
+      if file.previewElement
+        file.previewElement.classList.add "dz-processing"
+        file._removeLink.textContent = @options.dictCancelUpload if file._removeLink
     
     processingmultiple: noop
     
@@ -340,7 +364,8 @@ class Dropzone extends Em
     # Receives `file`, `progress` (percentage 0-100) and `bytesSent`.
     # To get the total number of bytes of the file, use `file.size`
     uploadprogress: (file, progress, bytesSent) ->
-      node.style.width = "#{progress}%" for node in file.previewElement.querySelectorAll("[data-dz-uploadprogress]")
+      if file.previewElement
+        node.style.width = "#{progress}%" for node in file.previewElement.querySelectorAll("[data-dz-uploadprogress]")
 
     # Called whenever the total upload progress gets updated.
     # Called with totalUploadProgress (0-100), totalBytes and totalBytesSent
@@ -356,7 +381,8 @@ class Dropzone extends Em
     # When the complete upload is finished and successfull
     # Receives `file`
     success: (file) ->
-      file.previewElement.classList.add "dz-success"
+      if file.previewElement
+        file.previewElement.classList.add "dz-success"
 
     successmultiple: noop
 
@@ -447,10 +473,12 @@ class Dropzone extends Em
       # Remove the fallback
       fallback.parentNode.removeChild fallback
 
-    if @options.previewsContainer
-      @previewsContainer = Dropzone.getElement @options.previewsContainer, "previewsContainer"
-    else
-      @previewsContainer = @element
+    # Display previews in the previewsContainer element or the Dropzone element unless explicitly set to false
+    if @options.previewsContainer != false
+      if @options.previewsContainer
+        @previewsContainer = Dropzone.getElement @options.previewsContainer, "previewsContainer"
+      else
+        @previewsContainer = @element
 
     if @options.clickable
       if @options.clickable == yes
@@ -469,10 +497,15 @@ class Dropzone extends Em
   # Not sure when that's going to be useful, but added for completeness.
   getRejectedFiles: -> file for file in @files when not file.accepted
 
-  # Returns all files that are in the queue
-  getQueuedFiles: -> file for file in @files when file.status == Dropzone.QUEUED
+  getFilesWithStatus: (status) -> file for file in @files when file.status == status
 
-  getUploadingFiles: -> file for file in @files when file.status == Dropzone.UPLOADING
+  # Returns all files that are in the queue
+  getQueuedFiles: -> @getFilesWithStatus Dropzone.QUEUED
+
+  getUploadingFiles: -> @getFilesWithStatus Dropzone.UPLOADING
+
+  # Files that are either queued or uploading
+  getActiveFiles: -> file for file in @files when file.status == Dropzone.UPLOADING or file.status == Dropzone.QUEUED
 
 
   init: ->
@@ -598,10 +631,10 @@ class Dropzone extends Em
     totalBytesSent = 0
     totalBytes = 0
 
-    acceptedFiles = @getAcceptedFiles()
+    activeFiles = @getActiveFiles()
 
-    if acceptedFiles.length
-      for file in @getAcceptedFiles()
+    if activeFiles.length
+      for file in @getActiveFiles()
         totalBytesSent += file.upload.bytesSent
         totalBytes += file.upload.total
       totalUploadProgress = 100 * totalBytesSent / totalBytes
@@ -610,7 +643,13 @@ class Dropzone extends Em
 
     @emit "totaluploadprogress", totalUploadProgress, totalBytes, totalBytesSent
 
-
+  # @options.paramName can be a function taking one parameter rather than a string.
+  # A parameter name for a file is obtained simply by calling this with an index number.
+  _getParamName: (n) ->
+    if typeof @options.paramName is "function"
+      @options.paramName n
+    else
+      "#{@options.paramName}#{if @options.uploadMultiple then "[#{n}]" else ""}"
 
   # Returns a form that can be used as fallback if the browser does not support DragnDrop
   #
@@ -621,7 +660,7 @@ class Dropzone extends Em
 
     fieldsString = """<div class="dz-fallback">"""
     fieldsString += """<p>#{@options.dictFallbackText}</p>""" if @options.dictFallbackText
-    fieldsString += """<input type="file" name="#{@options.paramName}#{if @options.uploadMultiple then "[]" else ""}" #{if @options.uploadMultiple then 'multiple="multiple"' } /><input type="submit" value="Upload!"></div>"""
+    fieldsString += """<input type="file" name="#{@_getParamName 0}" #{if @options.uploadMultiple then 'multiple="multiple"' } /><input type="submit" value="Upload!"></div>"""
 
     fields = Dropzone.createElement fieldsString
     if @element.tagName isnt "FORM"
@@ -795,16 +834,16 @@ class Dropzone extends Em
         file.accepted = false
         @_errorProcessing [ file ], error # Will set the file.status
       else
-        @enqueueFile file # Will set .accepted = true
+        file.accepted = true
+        @enqueueFile file if @options.autoQueue # Will set .accepted = true
       @_updateMaxFilesReachedClass()
 
 
-  # Wrapper for enqueuFile
+  # Wrapper for enqueueFile
   enqueueFiles: (files) -> @enqueueFile file for file in files; null
 
   enqueueFile: (file) ->
-    file.accepted = true
-    if file.status == Dropzone.ADDED
+    if file.status == Dropzone.ADDED and file.accepted == true
       file.status = Dropzone.QUEUED
       if @options.autoProcessQueue
         setTimeout (=> @processQueue()), 0 # Deferring the call
@@ -858,8 +897,8 @@ class Dropzone extends Em
 
         resizeInfo = @options.resize.call @, file
 
-        resizeInfo.trgWidth ?= @options.thumbnailWidth
-        resizeInfo.trgHeight ?= @options.thumbnailHeight
+        resizeInfo.trgWidth ?= resizeInfo.optWidth 
+        resizeInfo.trgHeight ?= resizeInfo.optHeight
 
         canvas = document.createElement "canvas"
         ctx = canvas.getContext "2d"
@@ -1054,7 +1093,7 @@ class Dropzone extends Em
     # Finally add the file
     # Has to be last because some servers (eg: S3) expect the file to be the
     # last parameter
-    formData.append "#{@options.paramName}#{if @options.uploadMultiple then "[]" else ""}", file, file.name for file in files
+    formData.append @_getParamName(i), files[i], files[i].name for i in [0..files.length-1]
 
     xhr.send formData
 
@@ -1087,7 +1126,7 @@ class Dropzone extends Em
 
 
 
-Dropzone.version = "3.8.5"
+Dropzone.version = "3.9.0"
 
 
 # This is a map of options for your different dropzones. Add configurations
